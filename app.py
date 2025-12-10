@@ -1,70 +1,91 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="NIFTY Impact Timeline", layout="wide")
-
-st.title("📉 NIFTY 50 Impact Timeline")
-st.markdown("A view of events affecting the market over 1, 7, and 30 days.")
+st.set_page_config(page_title="NIFTY Deep Dive", layout="wide")
+st.title("📉 NIFTY 50 Impact Dashboard")
+st.markdown("Click on any item to see the **News & Data Sources** used for the calculation.")
 
 @st.cache_data(ttl=0)
 def load_data():
     try:
-        return pd.read_csv("dashboard_data.csv")
+        # Ensure we treat 'Details' as string even if empty
+        return pd.read_csv("dashboard_data.csv", dtype={'Details': str})
     except:
         return None
 
 df = load_data()
 
 if df is not None:
-    # Create 3 Tabs/Columns for specific timeframes
+    # Styles
+    st.markdown("""
+    <style>
+    .big-font { font-size:20px !important; font-weight: bold; }
+    .impact-pos { color: #28a745; }
+    .impact-neg { color: #dc3545; }
+    </style>
+    """, unsafe_allow_html=True)
+
     col1, col2, col3 = st.columns(3)
 
-    # --- STYLE HELPER ---
-    def card(container, title, value, impact, sub_label):
-        """Creates a clean visual card for an event"""
-        color = "green" if impact in ["Positive", "Bullish"] else "red"
-        if impact in ["Info", "Volatile"]: color = "gray"
+    def render_card(container, row):
+        """Renders a card with an expander for sources."""
+        title = row['Event']
+        value = row['Value']
+        impact = row['Impact']
+        details_raw = str(row['Details']) # Raw string of links
         
-        container.markdown(f"""
-        <div style="padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 10px;">
-            <div style="color: #888; font-size: 12px;">{sub_label}</div>
-            <div style="font-size: 18px; font-weight: bold;">{title}</div>
-            <div style="font-size: 24px; color: {color};">{value}</div>
-            <div style="font-size: 14px; font-weight: bold; color: {color};">{impact} Impact</div>
-        </div>
-        """, unsafe_allow_html=True)
+        # Color logic
+        color = "black"
+        if impact in ['Positive', 'Bullish']: color = "green"
+        elif impact in ['Negative', 'Bearish', 'Volatile', 'High']: color = "red"
+        
+        with container:
+            st.markdown(f"### {title}")
+            st.markdown(f"<span style='font-size: 26px; color: {color}'>{value}</span> ({impact})", unsafe_allow_html=True)
+            
+            # THE CLICKABLE DROPDOWN
+            with st.expander("🔎 View Sources & News"):
+                if details_raw and details_raw != "nan":
+                    # Split the string '|||' into individual articles
+                    articles = details_raw.split("|||")
+                    for art in articles:
+                        try:
+                            # Format: Title|Link|Date
+                            parts = art.split("|")
+                            if len(parts) >= 2:
+                                head = parts[0]
+                                link = parts[1]
+                                date = parts[2] if len(parts) > 2 else ""
+                                st.markdown(f"• [{head}]({link}) \n *{date}*")
+                        except:
+                            pass
+                else:
+                    st.caption("No specific news found for this timeframe.")
+            st.markdown("---")
 
-    # --- 1 DAY COLUMN ---
+    # --- RENDER COLUMNS ---
+    
     with col1:
-        st.header("⚡ 1 Day (Tactical)")
-        st.caption("Immediate Market Cues")
-        day_events = df[df['Timeframe'] == "1-Day"]
-        for _, row in day_events.iterrows():
-            card(st, row['Event'], row['Value'], row['Impact'], "Global Cue")
+        st.header("⚡ 1 Day")
+        for _, row in df[df['Timeframe'] == "1-Day"].iterrows():
+            render_card(st, row)
 
-    # --- 7 DAY COLUMN ---
     with col2:
-        st.header("📅 7 Days (Weekly)")
-        st.caption("Expiry & Earnings")
-        week_events = df[df['Timeframe'] == "7-Day"]
-        for _, row in week_events.iterrows():
-            card(st, row['Event'], row['Value'], row['Impact'], "Upcoming Event")
-
-    # --- 30 DAY COLUMN ---
+        st.header("📅 7 Days")
+        for _, row in df[df['Timeframe'] == "7-Day"].iterrows():
+            render_card(st, row)
+            
     with col3:
-        st.header("🌏 30 Days (Monthly)")
-        st.caption("Seasonality & Macro")
-        month_events = df[df['Timeframe'] == "30-Day"]
-        for _, row in month_events.iterrows():
-            card(st, row['Event'], row['Value'], row['Impact'], "Historical Data")
+        st.header("🌏 30 Days")
+        for _, row in df[df['Timeframe'] == "30-Day"].iterrows():
+            render_card(st, row)
 
     # Footer
-    st.markdown("---")
     last_update = df[df['Event'] == "Last Updated"].iloc[0]['Value']
-    st.caption(f"Last Auto-Update: {last_update} IST")
+    st.caption(f"Last Updated: {last_update} IST")
     
-    if st.button("🔄 Check for Updates"):
+    if st.button("🔄 Refresh Data"):
         st.rerun()
 
 else:
-    st.error("Data not initialized. Please run the GitHub Action.")
+    st.error("Data loading... Please wait or run the GitHub Action.")
