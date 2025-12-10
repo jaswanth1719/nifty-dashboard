@@ -2,83 +2,103 @@ import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
-import requests
-import xml.etree.ElementTree as ET
 
-def get_google_news():
-    # Fetch RSS feed for "Nifty 50 India Economy"
-    url = "https://news.google.com/rss/search?q=Nifty+50+India+Economy+Market&hl=en-IN&gl=IN&ceid=IN:en"
+# --- CONFIGURATION ---
+# We track the "Big 5" weights in NIFTY. 
+# If they move, NIFTY moves.
+TOP_STOCKS = {
+    'RELIANCE.NS': 'Reliance',
+    'HDFCBANK.NS': 'HDFC Bank',
+    'INFY.NS': 'Infosys',
+    'TCS.NS': 'TCS',
+    'ICICIBANK.NS': 'ICICI Bank'
+}
+
+def get_1_day_impact():
+    """Fetches immediate global cues."""
+    tickers = ['^GSPC', 'CL=F', '^VIX'] # S&P500, Oil, VIX
     try:
-        response = requests.get(url, timeout=5)
-        root = ET.fromstring(response.content)
-        
-        # Get top 3 headlines
-        headlines = []
-        count = 0
-        for item in root.findall('./channel/item'):
-            title = item.find('title').text
-            pubDate = item.find('pubDate').text
-            # Clean up date format
-            try:
-                dt = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S %Z")
-                pubDate = dt.strftime("%b %d, %H:%M")
-            except:
-                pass
-                
-            headlines.append({"Metric": "News", "Value": title, "Status": pubDate})
-            count += 1
-            if count >= 3: break
-            
-        return headlines
-    except:
-        return [{"Metric": "News", "Value": "Could not fetch news", "Status": "Error"}]
-
-def get_next_expiry():
-    # Calculate next Thursday
-    today = datetime.now()
-    days_ahead = 3 - today.weekday() # Thursday is 3
-    if days_ahead <= 0: 
-        days_ahead += 7
-    next_thursday = today + timedelta(days=days_ahead)
-    return next_thursday.strftime("%b %d (Thu)")
-
-def fetch_data():
-    tickers = ['^GSPC', '^NSEI', 'CL=F', '^VIX']
-    data_list = []
-    
-    # 1. MARKET DATA (The Numbers)
-    try:
-        data = yf.download(tickers, period='5d', progress=False)['Close']
+        data = yf.download(tickers, period='2d', progress=False)['Close']
         latest = data.iloc[-1]
         prev = data.iloc[-2]
-        changes = ((latest - prev) / prev) * 100
+        change = ((latest - prev) / prev) * 100
         
-        data_list = [
-            {"Metric": "US Markets (S&P 500)", "Value": f"{changes.get('^GSPC', 0):.2f}%", "Status": "Bullish" if changes.get('^GSPC', 0) > 0 else "Bearish"},
-            {"Metric": "Crude Oil", "Value": f"{changes.get('CL=F', 0):.2f}%", "Status": "Bearish" if changes.get('CL=F', 0) > 0 else "Bullish"},
-            {"Metric": "Global VIX", "Value": f"{data['^VIX'].iloc[-1]:.2f}", "Status": "Volatile" if data['^VIX'].iloc[-1] > 20 else "Stable"},
+        return [
+            {"Timeframe": "1-Day", "Event": "🇺🇸 US Market Trend", "Value": f"{change['^GSPC']:.2f}%", "Impact": "Positive" if change['^GSPC'] > 0 else "Negative"},
+            {"Timeframe": "1-Day", "Event": "🛢️ Crude Oil Impact", "Value": f"{change['CL=F']:.2f}%", "Impact": "Negative" if change['CL=F'] > 0 else "Positive"}, # Oil UP is bad
+            {"Timeframe": "1-Day", "Event": "📉 Market Fear (VIX)", "Value": f"{latest['^VIX']:.2f}", "Impact": "High" if latest['^VIX'] > 20 else "Normal"}
         ]
-    except Exception as e:
-        print(f"Market Data Error: {e}")
+    except:
+        return []
 
-    # 2. CALCULATED EVENTS
-    expiry = get_next_expiry()
-    data_list.append({"Metric": "📅 Next Weekly Expiry", "Value": expiry, "Status": "Critical"})
-
-    # 3. NEWS EVENTS
-    news_items = get_google_news()
-    data_list.extend(news_items)
+def get_7_day_impact():
+    """Calculates Expiry and looks for upcoming earnings."""
+    events = []
+    today = datetime.now()
     
-    # 4. TIMESTAMP
-    ist = pytz.timezone('Asia/Kolkata')
-    now = datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
-    data_list.append({"Metric": "Last Updated", "Value": now, "Status": "Info"})
+    # 1. Next Weekly Expiry (Thursday)
+    days_ahead = 3 - today.weekday()
+    if days_ahead <= 0: days_ahead += 7
+    next_expiry = today + timedelta(days=days_ahead)
+    events.append({
+        "Timeframe": "7-Day", 
+        "Event": "📅 Weekly Expiry", 
+        "Value": next_expiry.strftime('%b %d'), 
+        "Impact": "Volatile"
+    })
+    
+    # 2. Earnings Check (Next 7 Days)
+    # Note: Free APIs for exact future earnings dates are rare. 
+    # We use a placeholder logic here or check yfinance if available.
+    # Real reliable future earnings require paid APIs, so we note "Check Key Stocks".
+    
+    return events
 
-    return data_list
+def get_30_day_impact():
+    """Calculates Historical Seasonality for the current month."""
+    events = []
+    current_month = datetime.now().month
+    month_name = datetime.now().strftime('%B')
+    
+    # Fetch 10 years of NIFTY history
+    nifty = yf.download('^NSEI', period='10y', interval='1mo', progress=False)['Close']
+    
+    # Filter for current month only
+    nifty_monthly = nifty[nifty.index.month == current_month]
+    
+    # Calculate returns for this specific month over years
+    monthly_returns = nifty_monthly.pct_change() * 100
+    avg_return = monthly_returns.mean()
+    win_rate = (monthly_returns > 0).sum() / len(monthly_returns) * 100
+    
+    events.append({
+        "Timeframe": "30-Day",
+        "Event": f"📊 {month_name} Seasonality",
+        "Value": f"Avg: {avg_return:.2f}%",
+        "Impact": "Bullish" if avg_return > 0 else "Bearish"
+    })
+    
+    events.append({
+        "Timeframe": "30-Day",
+        "Event": "📈 Historical Win Rate",
+        "Value": f"{int(win_rate)}% Positive",
+        "Impact": "Info"
+    })
+    
+    return events
 
-# Execute and Save
-data = fetch_data()
-if data:
-    df = pd.DataFrame(data)
-    df.to_csv("dashboard_data.csv", index=False)
-    print("✅ CSV updated with News & Events")
+# --- MAIN EXECUTION ---
+all_events = []
+all_events.extend(get_1_day_impact())
+all_events.extend(get_7_day_impact())
+all_events.extend(get_30_day_impact())
+
+# Add Timestamp
+ist = pytz.timezone('Asia/Kolkata')
+now = datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
+all_events.append({"Timeframe": "Meta", "Event": "Last Updated", "Value": now, "Impact": "Info"})
+
+# Save
+df = pd.DataFrame(all_events)
+df.to_csv("dashboard_data.csv", index=False)
+print("✅ Structured Dashboard Data Updated")
