@@ -37,16 +37,16 @@ with tab1:
         st.subheader("Live NIFTY 50 Chart")
 
         @st.cache_data(ttl=180)
-        def get_nifty():
+        def get_nifty_data():
             try:
                 t = yf.Ticker("^NSEI")
                 # Determine interval based on market hours
                 now = datetime.now(pytz.timezone('Asia/Kolkata'))
                 if 9 <= now.hour < 16:
-                    # Intraday (5m) returns 'Datetime' index
+                    # Intraday (5m)
                     df = t.history(period="5d", interval="5m")
                 else:
-                    # Daily (1d) returns 'Date' index
+                    # Daily (1d)
                     df = t.history(period="30d", interval="1d")
                 
                 if df.empty:
@@ -54,13 +54,13 @@ with tab1:
                 
                 # Standardize Column Names
                 df.reset_index(inplace=True)
-                # Rename 'Datetime' (from 5m) to 'Date' so it matches 1d data
+                
+                # Rename 'Datetime' (from 5m) to 'Date'
                 if 'Datetime' in df.columns:
                     df.rename(columns={'Datetime': 'Date'}, inplace=True)
                 
                 # Ensure timezone conversion doesn't crash
                 if 'Date' in df.columns:
-                    # Check if tz-aware before converting
                     if df['Date'].dt.tz is None:
                         df['Date'] = df['Date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
                     else:
@@ -68,17 +68,20 @@ with tab1:
                         
                 return df[['Date', 'Close']]
             except Exception as e:
-                # Return empty DF on failure
                 return pd.DataFrame(columns=['Date', 'Close'])
 
-        data = get_nifty()
+        # Renamed variable to avoid conflict
+        chart_data = get_nifty_data()
 
-        if not data.empty:
-            # FIX: Explicit x/y mapping avoids Series execution errors
-            st.line_chart(data, x='Date', y='Close', use_container_width=True, height=420)
+        if not chart_data.empty and 'Close' in chart_data.columns:
+            # FIX: Set index explicitly for charting. 
+            # This prevents Streamlit from getting confused by column inputs.
+            chart_data = chart_data.set_index('Date')
+            
+            st.line_chart(chart_data['Close'], use_container_width=True, height=420)
 
-            latest = data['Close'].iloc[-1]
-            prev   = data['Close'].iloc[-2] if len(data)>1 else latest
+            latest = chart_data['Close'].iloc[-1]
+            prev   = chart_data['Close'].iloc[-2] if len(chart_data)>1 else latest
             pct    = (latest - prev) / prev * 100
             color  = "lime" if pct >= 0 else "red"
             st.markdown(f"<h2 style='text-align:center;color:{color}'>NIFTY 50 → {latest:,.0f} [{pct:+.2f}%]</h2>", unsafe_allow_html=True)
@@ -129,7 +132,7 @@ with tab2:
                 for a in d.split("|||"):
                     p = a.split("|", 2)
                     if len(p)>=2:
-                        # FIX: Corrected typo '[{p[0]]' -> '[{p[0]}]'
+                        # Corrected Link Format
                         col.markdown(f"**{p[2] if len(p)>2 else 'Recent'}** → [{p[0]}]({p[1]})")
             else:
                 col.caption("No news")
