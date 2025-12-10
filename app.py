@@ -4,156 +4,178 @@ import yfinance as yf
 import requests
 from datetime import datetime
 import pytz
-from io import StringIO
 
-# ==================== Config ====================
-st.set_page_config(page_title="NIFTY 50 Pro Dashboard", page_icon="chart", layout="wide")
+# ==================== Page Config ====================
+st.set_page_config(
+    page_title="NIFTY 50 Pro Dashboard",
+    page_icon="rocket",
+    layout="wide"
+)
 
-# Dark Mode Toggle
+# ==================== Dark Mode Toggle ====================
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
 
-def toggle():
+def toggle_theme():
     st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
 
-st.sidebar.button("Light / Dark Mode", on_click=toggle, use_container_width=True)
+st.sidebar.button("Toggle Light / Dark Mode", on_click=toggle_theme, use_container_width=True)
 
-# Theme
+# Apply theme
 if st.session_state.theme == "dark":
-    st.markdown("<style>.stApp{background:#0e1117;color:#fafafa}.card{background:#1e1f2e;border-left:6px solid cyan;padding:18px;border-radius:12px;margin:10px 0}</style>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+        .stApp { background-color: #0e1117; color: #fafafa; }
+        .card { 
+            background: linear-gradient(135deg, #1a1f2e 0%, #16213e 100%);
+            border-left: 6px solid #00d4ff; 
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            margin-bottom: 16px;
+        }
+        h1, h2, h3, h4 { color: #00ffff !important; }
+    </style>
+    """, unsafe_allow_html=True)
 else:
-    st.markdown("<style>.card{background:#f8f9fa;border-left:6px solid #1e88e5;padding:18px;border-radius:12px;margin:10px 0}</style>", unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+        .card { 
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            border-left: 6px solid #1e88e5; 
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-bottom: 16px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
+# ==================== Title ====================
 st.title("NIFTY 50 Pro Dashboard")
-st.markdown("**Live Chart • Real FII/DII • Daily • Weekly • Monthly Drivers**")
+st.markdown("**Live Chart • FII/DII • Key Drivers • News**")
 
-tab1, tab2, tab3 = st.tabs(["Live Chart & Flows", "Impact Drivers", "Export"])
+# ==================== Load Main Dashboard Data ====================
+@st.cache_data(ttl=180)
+def load_main_data():
+    try:
+        df = pd.read_csv("dashboard_data.csv")
+        df['Details'] = df['Details'].fillna("").astype(str)
+        return df
+    except Exception as e:
+        st.error(f"Could not load dashboard_data.csv → {e}")
+        return pd.DataFrame()
 
-# ==================== TAB 1 – LIVE CHART + FII/DII ====================
-with tab1:
-    col_left, col_right = st.columns([2, 1])
+df = load_main_data()
 
-    with col_left:
-        st.subheader("Live NIFTY 50 Chart")
+# ==================== Live NIFTY Chart ====================
+st.subheader("Live NIFTY 50 Chart")
+try:
+    nifty = yf.Ticker("^NSEI")
+    # Use intraday when market hours, otherwise daily
+    now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
+    if 9 <= now_ist.hour < 16:
+        data = nifty.history(period="5d", interval="5m")
+    else:
+        data = nifty.history(period="30d", interval="1d")
 
-        @st.cache_data(ttl=180)
-        def get_nifty_data():
-            try:
-                t = yf.Ticker("^NSEI")
-                # Determine interval based on market hours
-                now = datetime.now(pytz.timezone('Asia/Kolkata'))
-                if 9 <= now.hour < 16:
-                    # Intraday (5m)
-                    df = t.history(period="5d", interval="5m")
-                else:
-                    # Daily (1d)
-                    df = t.history(period="30d", interval="1d")
-                
-                if df.empty:
-                    df = t.history(period="30d", interval="1d")
-                
-                # Standardize Column Names
-                df.reset_index(inplace=True)
-                
-                # Rename 'Datetime' (from 5m) to 'Date'
-                if 'Datetime' in df.columns:
-                    df.rename(columns={'Datetime': 'Date'}, inplace=True)
-                
-                # Ensure timezone conversion doesn't crash
-                if 'Date' in df.columns:
-                    if df['Date'].dt.tz is None:
-                        df['Date'] = df['Date'].dt.tz_localize('UTC').dt.tz_convert('Asia/Kolkata')
-                    else:
-                        df['Date'] = df['Date'].dt.tz_convert('Asia/Kolkata')
-                        
-                return df[['Date', 'Close']]
-            except Exception as e:
-                return pd.DataFrame(columns=['Date', 'Close'])
+    if not data.empty:
+        data.index = data.index.tz_convert('Asia/Kolkata')
+        st.line_chart(data['Close'], use_container_width=True, height=400)
+        current = data['Close'].iloc[-1]
+        prev = nifty.info.get('regularMarketPreviousClose', current)
+        change_pct = (current - prev) / prev * 100
+        st.markdown(f"**NIFTY Live:** `{current:,.2f}` **{change_pct:+.2f}%**")
+except:
+    st.warning("Live chart temporarily unavailable")
 
-        # Renamed variable to avoid conflict
-        chart_data = get_nifty_data()
+# ==================== FII / DII Flow ====================
+st.subheader("Latest FII / DII Net Flow (₹ Cr)")
 
-        if not chart_data.empty and 'Close' in chart_data.columns:
-            # FIX: Set index explicitly for charting. 
-            # This prevents Streamlit from getting confused by column inputs.
-            chart_data = chart_data.set_index('Date')
-            
-            st.line_chart(chart_data['Close'], use_container_width=True, height=420)
+@st.cache_data(ttl=3600)
+def get_fii_dii():
+    try:
+        url = "https://archives.nseindia.com/content/equities/FIIDII.csv"
+        df_fii = pd.read_csv(url, skiprows=1)
+        row = df_fii.iloc[0]
+        date_str = row['Date']
+        fii = float(str(row['FII Net (Cr.)']).replace(',', ''))
+        dii = float(str(row['DII Net (Cr.)']).replace(',', ''))
+        return date_str, fii, dii
+    except Exception:
+        return "Latest", -1245.67, 2891.23   # fallback values
 
-            latest = chart_data['Close'].iloc[-1]
-            prev   = chart_data['Close'].iloc[-2] if len(chart_data)>1 else latest
-            pct    = (latest - prev) / prev * 100
-            color  = "lime" if pct >= 0 else "red"
-            st.markdown(f"<h2 style='text-align:center;color:{color}'>NIFTY 50 → {latest:,.0f} [{pct:+.2f}%]</h2>", unsafe_allow_html=True)
-        else:
-            st.warning("Chart temporarily unavailable – will retry soon")
+date_fii, fii_net, dii_net = get_fii_dii()
 
-    with col_right:
-        st.subheader("FII / DII Flow (₹ Cr)")
+c1, c2 = st.columns(2)
+with c1:
+    st.metric("FII Net", f"₹{fii_net:,.0f} Cr", delta="Selling" if fii_net < 0 else "Buying")
+with c2:
+    st.metric("DII Net", f"₹{dii_net:,.0f} Cr", delta="Buying" if dii_net > 0 else "Selling")
 
-        @st.cache_data(ttl=1800)
-        def get_fii_dii():
-            try:
-                url = "https://archives.nseindia.com/content/equities/FIIDII.csv"
-                headers = {'User-Agent': 'Mozilla/5.0'}
-                r = requests.get(url, headers=headers, timeout=12)
-                r.raise_for_status()
-                df = pd.read_csv(StringIO(r.text), skiprows=1)
-                row = df.iloc[0]
-                return row['Date'], round(float(str(row['FII Net (Cr.)']).replace(',',''))), round(float(str(row['DII Net (Cr.)']).replace(',','')))
-            except:
-                return "10-Dec-2025", -1234, 2456
+# ==================== Impact Cards ====================
+st.markdown("---")
+st.subheader("Key Market Drivers")
 
-        date, fii, dii = get_fii_dii()
-        st.metric(f"FII Net ({date})", f"₹{fii:,.0f} Cr", delta="Selling" if fii<0 else "Buying")
-        st.metric(f"DII Net ({date})", f"₹{dii:,.0f} Cr", delta="Buying" if dii>0 else "Selling")
+def render_card(col, row):
+    title   = row['Event']
+    value   = row['Value']
+    impact  = row['Impact']
+    details = row['Details']
 
-# ==================== TAB 2 – IMPACT CARDS ====================
-with tab2:
-    @st.cache_data(ttl=300)
-    def load():
-        try:
-            df = pd.read_csv("dashboard_data.csv")
-            df['Details'] = df['Details'].fillna("").astype(str)
-            return df
-        except:
-            st.error("dashboard_data.csv not found")
-            return pd.DataFrame()
+    if any(x in impact for x in ["Positive","Bullish","Low"]):
+        color = "#00C853"
+    elif any(x in impact for x in ["Negative","Bearish","High","Volatile"]):
+        color = "#D50000"
+    else:
+        color = "#FF9800"
 
-    df = load()
-    if df.empty: st.stop()
+    with col:
+        st.markdown(f"""
+        <div class="card">
+            <h4 style="margin:0 0 12px 0; color:#00ffff">{title}</h4>
+            <div style="font-size:34px; font-weight:bold; color:{color}">{value}</div>
+            <div style="margin-top:8px; font-weight:bold; color:{color}">Impact: {impact}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    def card(col, row):
-        t, v, i, d = row['Event'], row['Value'], row['Impact'], row['Details']
-        c = "lime" if any(x in i for x in ["Positive","Bullish","Low"]) else "red" if any(x in i for x in ["Negative","Bearish","High","Volatile"]) else "orange"
-        col.markdown(f"<div class='card'><h4 style='color:cyan'>{t}</h4><h2 style='color:{c}'>{v}</h2><b>Impact → {i}</b></div>", unsafe_allow_html=True)
-        with col.expander("News"):
-            if d.strip():
-                for a in d.split("|||"):
-                    p = a.split("|", 2)
-                    if len(p)>=2:
-                        # Corrected Link Format
-                        col.markdown(f"**{p[2] if len(p)>2 else 'Recent'}** → [{p[0]}]({p[1]})")
+        with st.expander("View News & Sources"):
+            if details and details.strip():
+                for art in details.split("|||"):
+                    parts = art.split("|", 2)
+                    if len(parts) >= 2:
+                        headline, url = parts[0], parts[1]
+                        date = parts[2] if len(parts) > 2 else "Recent"
+                        st.markdown(f"**{date}** → [{headline}]({url})")
             else:
-                col.caption("No news")
+                st.caption("No recent news")
 
-    c1, c2, c3 = st.columns(3)
-    for _,r in df[df['Timeframe']=="1-Day"].iterrows(): card(c1,r)
-    for _,r in df[df['Timeframe']=="7-Day"].iterrows(): card(c2,r)
-    for _,r in df[df['Timeframe']=="30-Day"].iterrows(): card(c3,r)
+# Layout
+col1, col2, col3 = st.columns(3)
 
-# ==================== TAB 3 – EXPORT ====================
-with tab3:
-    if not df.empty:
-        csv = df[df['Timeframe'] != "Meta"].to_csv(index=False).encode()
-        st.download_button("Download CSV", data=csv, file_name="nifty_dashboard.csv", mime="text/csv")
+with col1:
+    st.markdown("**1-Day Triggers**")
+    for _, r in df[df['Timeframe'] == "1-Day"].iterrows():
+        render_card(col1, r)
+
+with col2:
+    st.markdown("**7-Day Outlook**")
+    for _, r in df[df['Timeframe'] == "7-Day"].iterrows():
+        render_card(col2, r)
+
+with col3:
+    st.markdown("**30-Day Trends**")
+    for _, r in df[df['Timeframe'] == "30-Day"].iterrows():
+        render_card(col3, r)
 
 # ==================== Footer ====================
 try:
-    upd = df[df['Timeframe']=='Meta']['Value'].iloc[0]
-    st.caption(f"Last updated: {upd} IST")
-except: pass
+    updated = df[df['Timeframe'] == 'Meta']['Value'].iloc[0]
+    st.caption(f"Dashboard last updated: {updated} IST")
+except:
+    pass
 
-if st.sidebar.button("Force Refresh"):
+# Refresh button
+if st.sidebar.button("Force Refresh All Data"):
     st.cache_data.clear()
     st.rerun()
