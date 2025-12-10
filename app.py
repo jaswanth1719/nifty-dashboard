@@ -27,9 +27,8 @@ st.sidebar.button(
     use_container_width=True
 )
 
-# --- CSS Styling (Beautiful & Responsive) ---
+# --- CSS Styling ---
 if st.session_state.theme == "dark":
-    # Cyberpunk / Dark Finance Theme
     st.markdown("""
     <style>
     .stApp { background-color: #0e1117; color: #ffffff; }
@@ -37,7 +36,7 @@ if st.session_state.theme == "dark":
         background-color: #1a1c24;
         padding: 20px;
         border-radius: 10px;
-        border-left: 5px solid #00d4ff; /* Cyan accent */
+        border-left: 5px solid #00d4ff;
         margin-bottom: 15px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.3);
     }
@@ -46,7 +45,6 @@ if st.session_state.theme == "dark":
     </style>
     """, unsafe_allow_html=True)
 else:
-    # Professional Light Theme
     st.markdown("""
     <style>
     .stApp { background-color: #ffffff; color: #000000; }
@@ -54,7 +52,7 @@ else:
         background-color: #f8f9fa;
         padding: 20px;
         border-radius: 10px;
-        border-left: 5px solid #2962ff; /* Blue accent */
+        border-left: 5px solid #2962ff;
         margin-bottom: 15px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
@@ -68,29 +66,27 @@ st.markdown("Live Market Data • FII/DII Flows • Automated Impact Analysis")
 
 # ==================== 2. DATA FUNCTIONS ====================
 
-@st.cache_data(ttl=180) # Refresh Chart every 3 mins
+@st.cache_data(ttl=180)
 def get_nifty_chart_data():
     """Fetches 5-min data if market is open, else Daily data."""
     try:
         ticker = yf.Ticker("^NSEI")
-        
-        # Check Time (IST)
         ist = pytz.timezone('Asia/Kolkata')
         now = datetime.now(ist)
         
-        # Logic: If between 9:00 AM and 4:00 PM, try fetching Intraday
+        # Fetch Intraday if market hours, else Daily
         if 9 <= now.hour < 16:
             df = ticker.history(period="1d", interval="5m")
         else:
             df = ticker.history(period="1mo", interval="1d")
             
-        if df.empty: # Fallback
+        if df.empty:
             df = ticker.history(period="1mo", interval="1d")
 
-        # Standardize for Charting
+        # Clean Data
         df = df[['Close']].reset_index()
         
-        # Rename whatever time column comes back (Date or Datetime) to 'Date'
+        # Standardize Date Column Name
         cols = [c.lower() for c in df.columns]
         if 'datetime' in cols:
             df.rename(columns={'Datetime': 'Date'}, inplace=True)
@@ -101,9 +97,8 @@ def get_nifty_chart_data():
     except Exception:
         return pd.DataFrame()
 
-@st.cache_data(ttl=1800) # Refresh FII/DII every 30 mins
+@st.cache_data(ttl=1800)
 def get_fii_dii_status():
-    """Scrapes FII/DII data directly from NSE Archives."""
     try:
         url = "https://archives.nseindia.com/content/equities/FIIDII.csv"
         headers = {'User-Agent': 'Mozilla/5.0'}
@@ -121,7 +116,7 @@ def get_fii_dii_status():
     except:
         return "Offline", 0, 0
 
-@st.cache_data(ttl=300) # Refresh Impact Cards every 5 mins
+@st.cache_data(ttl=300)
 def load_impact_data():
     try:
         df = pd.read_csv("dashboard_data.csv")
@@ -143,18 +138,23 @@ with tab1:
         chart_df = get_nifty_chart_data()
         
         if not chart_df.empty and 'Close' in chart_df.columns:
-            # Calculate Live Change
+            # Live Change Calculation
             current_price = chart_df['Close'].iloc[-1]
-            prev_price = chart_df['Close'].iloc[0] # Open of the period
+            prev_price = chart_df['Close'].iloc[0]
             change_pct = ((current_price - prev_price) / prev_price) * 100
             
             color = "green" if change_pct >= 0 else "red"
             st.markdown(f"<h2 style='color: {color}'>{current_price:,.2f} ({change_pct:+.2f}%)</h2>", unsafe_allow_html=True)
             
-            # Render Chart (Explicitly setting index to avoid 'Series' error)
-            st.line_chart(chart_df.set_index('Date')['Close'], use_container_width=True, height=400)
+            # --- CRITICAL FIX IS HERE ---
+            # 1. Set Date as Index
+            # 2. Select 'Close' column with DOUBLE BRACKETS [['Close']]
+            #    This forces pandas to keep it as a DataFrame, not a Series.
+            plot_data = chart_df.set_index('Date')[['Close']]
+            
+            st.line_chart(plot_data, use_container_width=True, height=400)
         else:
-            st.warning("Chart data currently unavailable. Market might be pre-open.")
+            st.warning("Chart data currently unavailable.")
 
     with col2:
         st.subheader("Institutional Flow")
@@ -170,19 +170,16 @@ with tab2:
     impact_df = load_impact_data()
     
     if not impact_df.empty:
-        # Helper to render the styled card
         def render_card(col, row):
             title = row['Event']
             value = row['Value']
             impact = row['Impact']
             news_raw = row['Details']
             
-            # Dynamic Coloring based on Sentiment
-            text_color = "#ffa726" # Default Orange
+            text_color = "#ffa726" # Orange
             if any(x in impact for x in ['Positive', 'Bullish', 'Low']): text_color = "#66bb6a" # Green
             if any(x in impact for x in ['Negative', 'Bearish', 'High', 'Volatile']): text_color = "#ef5350" # Red
             
-            # HTML Card
             col.markdown(f"""
             <div class="card">
                 <div class="sub-text">{title}</div>
@@ -191,7 +188,6 @@ with tab2:
             </div>
             """, unsafe_allow_html=True)
             
-            # News Expander
             with col.expander("📰 Read News"):
                 if news_raw and len(news_raw) > 5:
                     articles = news_raw.split("|||")
@@ -205,7 +201,6 @@ with tab2:
                 else:
                     st.caption("No specific news found.")
 
-        # Columns for 1-Day, 7-Day, 30-Day
         c1, c2, c3 = st.columns(3)
         
         with c1:
@@ -230,12 +225,7 @@ with tab2:
 with tab3:
     if not impact_df.empty:
         csv = impact_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Download Dashboard Data (CSV)",
-            data=csv,
-            file_name="nifty_impact_analysis.csv",
-            mime="text/csv"
-        )
+        st.download_button("📥 Download CSV", data=csv, file_name="nifty_impact.csv", mime="text/csv")
 
 # ==================== FOOTER ====================
 st.markdown("---")
