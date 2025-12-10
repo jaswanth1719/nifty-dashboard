@@ -1,4 +1,4 @@
-# app.py → FINAL VERSION THAT WORKS 100% (Dec 2025)
+# app.py → FINAL 100% WORKING VERSION (Dec 2025)
 import streamlit as st
 import pandas as pd
 import yfinance as yf
@@ -19,7 +19,7 @@ def toggle():
 
 st.sidebar.button("Light / Dark Mode", on_click=toggle, use_container_width=True)
 
-# Theme
+# Theme CSS
 if st.session_state.theme == "dark":
     st.markdown("<style>.stApp{background:#0e1117;color:#fafafa}.card{background:#1e1f2e;border-left:6px solid cyan;padding:18px;border-radius:12px;margin:10px 0}</style>", unsafe_allow_html=True)
 else:
@@ -49,7 +49,7 @@ with tab1:
                 if df.empty:
                     df = t.history(period="30d", interval="1d")
                 df = df.tz_convert('Asia/Kolkata')
-                df.reset_index(inplace=True)  # → plain Date column
+                df.reset_index(inplace=True)
                 return df
             except:
                 return pd.DataFrame()
@@ -57,7 +57,6 @@ with tab1:
         data = get_nifty()
 
         if not data.empty:
-            # THIS LINE IS NOW CORRECT
             st.line_chart(data.set_index('Date')['Close'], use_container_width=True, height=420)
 
             latest = data['Close'].iloc[-1]
@@ -66,7 +65,7 @@ with tab1:
             color  = "lime" if pct >= 0 else "red"
             st.markdown(f"<h2 style='text-align:center;color:{color}'>NIFTY 50 → {latest:,.0f} [{pct:+.2f}%]</h2>", unsafe_allow_html=True)
         else:
-            st.warning("Chart temporarily unavailable – will retry soon")
+            st.warning("Chart temporarily unavailable")
 
     with col_right:
         st.subheader("FII / DII Flow (₹ Cr)")
@@ -107,19 +106,22 @@ with tab2:
         t, v, i, d = row['Event'], row['Value'], row['Impact'], row['Details']
         c = "lime" if any(x in i for x in ["Positive","Bullish","Low"]) else "red" if any(x in i for x in ["Negative","Bearish","High","Volatile"]) else "orange"
         col.markdown(f"<div class='card'><h4 style='color:cyan'>{t}</h4><h2 style='color:{c}'>{v}</h2><b>Impact → {i}</b></div>", unsafe_allow_html=True)
-        with col.expander("News"):
+        with col.expander("View News & Sources"):
             if d.strip():
-                for a in d.split("|||"):
-                    p = a.split("|", 2)
-                    if len(p)>=2:
-                        col.markdown(f"**{p[2] if len(p)>2 else 'Recent'}** → [{p[0]]({p[1]})")
+                for article in d.split("|||"):
+                    parts = article.split("|", 2)
+                    if len(parts) >= 2:
+                        headline = parts[0]
+                        url = parts[1]
+                        date_part = parts[2] if len(parts) > 2 else "Recent"
+                        col.markdown(f"**{date_part}** → [{headline}]({url})")
             else:
-                col.caption("No news")
+                col.caption("No recent news")
 
     c1, c2, c3 = st.columns(3)
-    for _,r in df[df['Timeframe']=="1-Day"].iterrows(): card(c1,r)
-    for _,r in df[df['Timeframe']=="7-Day"].iterrows(): card(c2,r)
-    for _,r in df[df['Timeframe']=="30-Day"].iterrows(): card(c3,r)
+    for _, r in df[df['Timeframe'] == "1-Day"].iterrows(): card(c1, r)
+    for _, r in df[df['Timeframe'] == "7-Day"].iterrows(): card(c2, r)
+    for _, r in df[df['Timeframe'] == "30-Day"].iterrows(): card(c3, r)
 
 # ==================== TAB 3 – EXPORT ====================
 with tab3:
