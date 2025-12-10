@@ -54,28 +54,41 @@ def get_change_and_news(ticker, query_term):
         return 0.0, ""
 
 def get_seasonality_impact():
-    """Calculates historical NIFTY returns for the current month."""
+    """Calculates historical NIFTY returns for the current month (Excluding incomplete current month)."""
     try:
         current_month = datetime.now().month
-        month_name = datetime.now().strftime('%B')
+        current_year = datetime.now().year
         
-        # Fetch 5 years of monthly data
+        # Fetch 10 years of monthly data to get a solid average
         nifty = yf.Ticker("^NSEI")
-        hist = nifty.history(period="5y", interval="1mo")
+        hist = nifty.history(period="10y", interval="1mo")
         
         if hist.empty:
             return "0.00%", "Info"
             
-        # Filter for current month (e.g., all Decembers)
-        hist_monthly = hist[hist.index.month == current_month]
+        # 1. Calculate Monthly Returns using standard % Change (Close vs Prev Close)
+        # This correctly captures overnight gaps unlike (Close - Open)
+        hist['Return'] = hist['Close'].pct_change() * 100
         
-        if not hist_monthly.empty:
-            # Calculate % change for each of those months
-            # We use 'Close' vs 'Open' of that month to see if it was a green/red month
-            monthly_returns = ((hist_monthly['Close'] - hist_monthly['Open']) / hist_monthly['Open']) * 100
-            avg_return = float(monthly_returns.mean())
+        # 2. Filter for ONLY the current month (e.g., all Decembers)
+        seasonal_data = hist[hist.index.month == current_month].copy()
+        
+        # 3. CRITICAL FIX: Exclude the current incomplete month
+        # If the last row is the current month of the current year, drop it.
+        if not seasonal_data.empty:
+            last_date = seasonal_data.index[-1]
+            if last_date.month == current_month and last_date.year == current_year:
+                seasonal_data = seasonal_data.iloc[:-1]
+        
+        if not seasonal_data.empty:
+            avg_return = float(seasonal_data['Return'].mean())
             
-            impact = "Bullish" if avg_return > 0 else "Bearish"
+            # Determine Impact
+            if avg_return > 1.5: impact = "Bullish"
+            elif avg_return > 0: impact = "Positive"
+            elif avg_return < -1.5: impact = "Bearish"
+            else: impact = "Negative"
+            
             return f"Avg {avg_return:+.2f}%", impact
             
     except Exception as e:
@@ -88,9 +101,8 @@ def build_data():
     events = []
     
     # --- 1 DAY ITEMS ---
-    # US Markets
     val, news = get_change_and_news("^GSPC", "US Stock Market S&P 500 analysis")
-    if val == 0: val, news = get_change_and_news("SPY", "US Stock Market analysis") # Fallback
+    if val == 0: val, news = get_change_and_news("SPY", "US Stock Market analysis")
     
     events.append({
         "Timeframe": "1-Day", "Event": "🇺🇸 US Market Trend", 
@@ -98,7 +110,6 @@ def build_data():
         "Details": news
     })
 
-    # Crude Oil
     val, news = get_change_and_news("CL=F", "Crude Oil Price India economy")
     events.append({
         "Timeframe": "1-Day", "Event": "🛢️ Crude Oil Impact", 
@@ -106,7 +117,6 @@ def build_data():
         "Details": news
     })
 
-    # VIX
     tick = yf.Ticker("^VIX")
     hist = tick.history(period="2d")
     vix_val = hist['Close'].iloc[-1] if not hist.empty else 0
@@ -129,7 +139,7 @@ def build_data():
         "Details": get_related_news("Nifty 50 Option Chain Analysis", days_lookback=7)
     })
 
-    # --- 30 DAY ITEMS (RESTORED LOGIC) ---
+    # --- 30 DAY ITEMS ---
     month_name = datetime.now().strftime('%B')
     seas_val, seas_impact = get_seasonality_impact()
     
@@ -149,4 +159,4 @@ def build_data():
 # EXECUTE
 df = build_data()
 df.to_csv("dashboard_data.csv", index=False)
-print("✅ Dashboard updated with Seasonality & News")
+print("✅ Dashboard updated: Seasonality Fixed")
