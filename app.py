@@ -68,55 +68,6 @@ def load_main_data():
 
 df = load_main_data()
 
-# ==================== Live NIFTY Chart (100% Working) ====================
-st.subheader("Live NIFTY 50 Chart")
-
-@st.cache_data(ttl=60)  # Update every 60 seconds
-def get_nifty_data():
-    try:
-        # Multiple fallbacks in order of reliability
-        tickers = ["^NSEI", "NIFTY50.NS", "NIFTY_50.NS"]
-        for ticker in tickers:
-            try:
-                t = yf.Ticker(ticker)
-                # During market hours: 5-min candles, otherwise daily
-                now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
-                if 9 <= now_ist.hour < 16 and now_ist.weekday() < 5:  # Market open
-                    hist = t.history(period="5d", interval="5m", prepost=True)
-                else:
-                    hist = t.history(period="30d", interval="1d")
-                
-                if not hist.empty and len(hist) > 1:
-                    hist.index = hist.index.tz_convert('Asia/Kolkata')
-                    info = t.info
-                    current = hist['Close'].iloc[-1]
-                    prev_close = info.get('regularMarketPreviousClose') or hist['Close'].iloc[-2]
-                    change_pct = (current - prev_close) / prev_close * 100
-                    return hist['Close'], current, change_pct
-            except:
-                continue
-    except:
-        pass
-    return None, 0, 0
-
-price_series, current_price, pct_change = get_nifty_data()
-
-if price_series is not None and current_price > 1000:
-    st.line_chart(price_series, use_container_width=True, height=400)
-    st.markdown(
-        f"<h2 style='text-align: center; color: {'#00ff00' if pct_change>=0 else '#ff4444'}'>"
-        f"NIFTY 50: {current_price:,.2f} <span style='font-size:22px'>"
-        f"{'+' if pct_change >= 0 else ''}{pct_change:.2f}%</span></h2>",
-        unsafe_allow_html=True
-    )
-else:
-    # Final fallback: show static image when everything fails (very rare)
-    st.markdown(
-        "<h3 style='text-align: center;'>NIFTY 50 Chart (Real-time feed temporarily down)</h3>",
-        unsafe_allow_html=True
-    )
-    st.image("https://nseindia.com/api/chart-databydate?index=NIFTY%2050", 
-             caption="Source: NSE India", use_column_width=True)
 
 # ==================== FII / DII Flow ====================
 st.subheader("Latest FII / DII Net Flow (₹ Cr)")
