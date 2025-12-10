@@ -80,6 +80,8 @@ st.subheader("FII / DII Net Flow (₹ Cr)")
 @st.cache_data(ttl=3600)
 def get_fii_dii():
     try:
+        # Note: NSE often blocks direct scripts. 
+        # Ideally, you should use headers={'User-Agent': 'Mozilla...'} with requests
         url = "https://archives.nseindia.com/content/equities/FIIDII.csv"
         df_fii = pd.read_csv(url, skiprows=1)
         latest = df_fii.iloc[0]
@@ -87,8 +89,9 @@ def get_fii_dii():
         fii_net = float(latest['FII Net (Cr.)'].replace(',', ''))
         dii_net = float(latest['DII Net (Cr.)'].replace(',', ''))
         return date_str, fii_net, dii_net
- except:
-        return "Recent", -1245.67, +2891.23  # fallback if market closed
+    except:
+        # Fallback data if NSE blocks the request or market is closed
+        return "Recent", -1245.67, +2891.23 
 
 date_fii, fii, dii = get_fii_dii()
 
@@ -106,7 +109,7 @@ with col_dii:
         delta=f"{'Buying' if dii > 0 else 'Selling'}"
     )
 
-# ------------------ Impact Cards (Same as before, fixed layout) ------------------
+# ------------------ Impact Cards ------------------
 st.markdown("---")
 st.subheader("Key Market Drivers")
 
@@ -143,25 +146,30 @@ def render_card(col, row):
 # Columns
 c1, c2, c3 = st.columns(3)
 
-with c1:
-    st.markdown("**1-Day Triggers**")
-    for _, r in df[df['Timeframe'] == "1-Day"].iterrows():
-        render_card(c1, r)
+# Check if dataframe is empty before iterating
+if not df.empty and 'Timeframe' in df.columns:
+    with c1:
+        st.markdown("**1-Day Triggers**")
+        for _, r in df[df['Timeframe'] == "1-Day"].iterrows():
+            render_card(c1, r)
 
-with c2:
-    st.markdown("**7-Day Outlook**")
-    for _, r in df[df['Timeframe'] == "7-Day"].iterrows():
-        render_card(c2, r)
+    with c2:
+        st.markdown("**7-Day Outlook**")
+        for _, r in df[df['Timeframe'] == "7-Day"].iterrows():
+            render_card(c2, r)
 
-with c3:
-    st.markdown("**30-Day Trends**")
-    for _, r in df[df['Timeframe'] == "30-Day"].iterrows():
-        render_card(c3, r)
+    with c3:
+        st.markdown("**30-Day Trends**")
+        for _, r in df[df['Timeframe'] == "30-Day"].iterrows():
+            render_card(c3, r)
+else:
+    st.info("No dashboard data found. Please ensure 'dashboard_data.csv' exists.")
 
 # ------------------ Footer ------------------
 try:
-    updated = df[df['Timeframe'] == 'Meta']['Value'].iloc[0]
-    st.caption(f"Dashboard Data Updated: {updated} IST")
+    if not df.empty:
+        updated = df[df['Timeframe'] == 'Meta']['Value'].iloc[0]
+        st.caption(f"Dashboard Data Updated: {updated} IST")
 except:
     pass
 
