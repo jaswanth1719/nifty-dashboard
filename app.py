@@ -1,14 +1,14 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(page_title="NIFTY Impact Dashboard", layout="wide")
-st.title("📊 NIFTY 50 Impact Dashboard")
-st.markdown("---")
+st.set_page_config(page_title="NIFTY Impact Timeline", layout="wide")
+
+st.title("📉 NIFTY 50 Impact Timeline")
+st.markdown("A view of events affecting the market over 1, 7, and 30 days.")
 
 @st.cache_data(ttl=0)
 def load_data():
     try:
-        # Read local CSV (Streamlit Cloud clones the repo, so file is local)
         return pd.read_csv("dashboard_data.csv")
     except:
         return None
@@ -16,46 +16,55 @@ def load_data():
 df = load_data()
 
 if df is not None:
-    # --- SECTION 1: MARKET METRICS ---
-    st.subheader("⚡ Market Drivers (1-Day View)")
-    col1, col2, col3, col4 = st.columns(4)
+    # Create 3 Tabs/Columns for specific timeframes
+    col1, col2, col3 = st.columns(3)
 
-    # Filter for non-news items
-    metrics = df[~df['Metric'].isin(['News', 'Last Updated'])]
-    
-    def show_metric(label, col):
-        row = metrics[metrics['Metric'] == label]
-        if not row.empty:
-            val = row.iloc[0]['Value']
-            status = row.iloc[0]['Status']
-            col.metric(label, val, status)
+    # --- STYLE HELPER ---
+    def card(container, title, value, impact, sub_label):
+        """Creates a clean visual card for an event"""
+        color = "green" if impact in ["Positive", "Bullish"] else "red"
+        if impact in ["Info", "Volatile"]: color = "gray"
+        
+        container.markdown(f"""
+        <div style="padding: 15px; border-radius: 10px; border: 1px solid #ddd; margin-bottom: 10px;">
+            <div style="color: #888; font-size: 12px;">{sub_label}</div>
+            <div style="font-size: 18px; font-weight: bold;">{title}</div>
+            <div style="font-size: 24px; color: {color};">{value}</div>
+            <div style="font-size: 14px; font-weight: bold; color: {color};">{impact} Impact</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    show_metric("US Markets (S&P 500)", col1)
-    show_metric("Crude Oil", col2)
-    show_metric("Global VIX", col3)
-    show_metric("📅 Next Weekly Expiry", col4)
+    # --- 1 DAY COLUMN ---
+    with col1:
+        st.header("⚡ 1 Day (Tactical)")
+        st.caption("Immediate Market Cues")
+        day_events = df[df['Timeframe'] == "1-Day"]
+        for _, row in day_events.iterrows():
+            card(st, row['Event'], row['Value'], row['Impact'], "Global Cue")
 
-    st.markdown("---")
+    # --- 7 DAY COLUMN ---
+    with col2:
+        st.header("📅 7 Days (Weekly)")
+        st.caption("Expiry & Earnings")
+        week_events = df[df['Timeframe'] == "7-Day"]
+        for _, row in week_events.iterrows():
+            card(st, row['Event'], row['Value'], row['Impact'], "Upcoming Event")
 
-    # --- SECTION 2: NEWS & EVENTS ---
-    st.subheader("📰 Latest News & Triggers")
-    
-    # Filter for News items
-    news_items = df[df['Metric'] == 'News']
-    
-    if not news_items.empty:
-        for index, row in news_items.iterrows():
-            # Display as a clean card
-            st.info(f"**{row['Status']}** | {row['Value']}")
-    else:
-        st.write("No major headlines fetched.")
+    # --- 30 DAY COLUMN ---
+    with col3:
+        st.header("🌏 30 Days (Monthly)")
+        st.caption("Seasonality & Macro")
+        month_events = df[df['Timeframe'] == "30-Day"]
+        for _, row in month_events.iterrows():
+            card(st, row['Event'], row['Value'], row['Impact'], "Historical Data")
 
     # Footer
-    last_update = df[df['Metric'] == 'Last Updated'].iloc[0]['Value']
-    st.caption(f"Last Updated: {last_update} IST")
+    st.markdown("---")
+    last_update = df[df['Event'] == "Last Updated"].iloc[0]['Value']
+    st.caption(f"Last Auto-Update: {last_update} IST")
     
-    if st.button("🔄 Refresh"):
+    if st.button("🔄 Check for Updates"):
         st.rerun()
 
 else:
-    st.warning("⚠️ Data file not found. Please run the GitHub Action.")
+    st.error("Data not initialized. Please run the GitHub Action.")
