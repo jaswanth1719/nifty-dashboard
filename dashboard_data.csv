@@ -1,9 +1,7 @@
-Metric,Value,Status
-US Markets (S&P 500),nan%,Bearish
-Crude Oil,0.24%,Bearish
-Global VIX,17.40,Stable
-📅 Next Weekly Expiry,Dec 11 (Thu),Critical
-News,"Market Highlights: Sensex extends losing run to 3rd day, drops 275 pts; Nifty below 25,800; IndiGo, Etern... - The Economic Times","Dec 10, 13:20"
-News,"Can US Fed rate cut give a shot in the arm to Indian stock market bulls? Not really, suggest past 5 instances - livemint.com","Dec 10, 09:59"
-News,"Stock market crash today: Nifty50 goes below 25,900; BSE Sensex down over 700 points - top reasons - Times of India","Dec 08, 03:55"
-Last Updated,2025-12-10 18:53:13,Info
+Timeframe,Event,Value,Impact
+1-Day,🇺🇸 US Market Trend,nan%,Negative
+1-Day,🛢️ Crude Oil Impact,0.19%,Negative
+1-Day,📉 Market Fear (VIX),17.32,Normal
+7-Day,📅 Weekly Expiry,Dec 11,Volatile
+30-Day,📊 December Seasonality,Avg: 13.88%,Bullish
+Meta,Last Updated,2025-12-10 19:22:44,Info
