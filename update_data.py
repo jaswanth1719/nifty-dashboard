@@ -5,17 +5,10 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import pytz
 
-# --- 1. NEWS ENGINE (FRESHNESS ENFORCED) ---
+# --- 1. NEWS ENGINE ---
 def get_related_news(topic, days_lookback=2):
-    """
-    Fetches news from Google News RSS with a strict date filter.
-    days_lookback: 2 means 'last 48 hours'.
-    """
-    # 1. Format topic for URL
+    """Fetches news with strict date filtering."""
     formatted_topic = topic.replace(" ", "+")
-    
-    # 2. Add 'when:Xd' to force recent results
-    # q={topic}+when:{days}d
     url = f"https://news.google.com/rss/search?q={formatted_topic}+when:{days_lookback}d&hl=en-IN&gl=IN&ceid=IN:en"
     
     try:
@@ -30,14 +23,12 @@ def get_related_news(topic, days_lookback=2):
             link = item.find('link').text
             pubDate = item.find('pubDate').text
             
-            # Clean Date Format (Mon, 05 Dec 2023...) -> (Dec 05)
             try:
                 dt = datetime.strptime(pubDate, "%a, %d %b %Y %H:%M:%S %Z")
-                clean_date = dt.strftime("%b %d, %H:%M")
+                clean_date = dt.strftime("%b %d")
             except:
                 clean_date = "Recent"
             
-            # Create a Markdown link string: "Title|Link|Date"
             links.append(f"{title}|{link}|{clean_date}")
             count += 1
             
@@ -45,10 +36,10 @@ def get_related_news(topic, days_lookback=2):
     except:
         return ""
 
-# --- 2. DATA ENGINE ---
-def get_change_and_news(ticker, name, query_term):
+# --- 2. DATA CALCULATIONS ---
+def get_change_and_news(ticker, query_term):
+    """Calculates % change for 1-Day items."""
     try:
-        # Data
         tick = yf.Ticker(ticker)
         hist = tick.history(period="5d")
         if len(hist) < 2: return 0.0, ""
@@ -57,35 +48,61 @@ def get_change_and_news(ticker, name, query_term):
         prev = hist['Close'].iloc[-2]
         change = ((latest - prev) / prev) * 100
         
-        # News (Strict 2-day limit for daily items)
         news_block = get_related_news(query_term, days_lookback=2)
-        
         return float(change), news_block
     except:
         return 0.0, ""
+
+def get_seasonality_impact():
+    """Calculates historical NIFTY returns for the current month."""
+    try:
+        current_month = datetime.now().month
+        month_name = datetime.now().strftime('%B')
+        
+        # Fetch 5 years of monthly data
+        nifty = yf.Ticker("^NSEI")
+        hist = nifty.history(period="5y", interval="1mo")
+        
+        if hist.empty:
+            return "0.00%", "Info"
+            
+        # Filter for current month (e.g., all Decembers)
+        hist_monthly = hist[hist.index.month == current_month]
+        
+        if not hist_monthly.empty:
+            # Calculate % change for each of those months
+            # We use 'Close' vs 'Open' of that month to see if it was a green/red month
+            monthly_returns = ((hist_monthly['Close'] - hist_monthly['Open']) / hist_monthly['Open']) * 100
+            avg_return = float(monthly_returns.mean())
+            
+            impact = "Bullish" if avg_return > 0 else "Bearish"
+            return f"Avg {avg_return:+.2f}%", impact
+            
+    except Exception as e:
+        print(f"Seasonality Error: {e}")
+        
+    return "Neutral", "Info"
 
 # --- 3. BUILD DASHBOARD ---
 def build_data():
     events = []
     
-    # --- 1 DAY ITEMS (Tactical - 48h News) ---
-    
+    # --- 1 DAY ITEMS ---
     # US Markets
-    # Query: "US Stock Market India Impact" to find relevance
-    val, news = get_change_and_news("^GSPC", "US Markets", "US Stock Market S&P 500 analysis")
-    if val == 0: val, news = get_change_and_news("SPY", "US Markets", "US Stock Market analysis")
+    val, news = get_change_and_news("^GSPC", "US Stock Market S&P 500 analysis")
+    if val == 0: val, news = get_change_and_news("SPY", "US Stock Market analysis") # Fallback
     
     events.append({
         "Timeframe": "1-Day", "Event": "🇺🇸 US Market Trend", 
-        "Value": f"{val:.2f}%", "Impact": "Positive" if val > 0 else "Negative",
+        "Value": f"{val:+.2f}%", "Impact": "Positive" if val > 0 else "Negative",
         "Details": news
     })
 
     # Crude Oil
-    val, news = get_change_and_news("CL=F", "Crude Oil", "Crude Oil Price India economy")
+    val, news = get_change_and_news("CL=F", "Crude Oil Price India economy")
     events.append({
         "Timeframe": "1-Day", "Event": "🛢️ Crude Oil Impact", 
-        "Value": f"{val:.2f}%", "Impact": "Negative" if val > 0 else "Positive",
+        "Value": f"{val:+.2f}%", "Impact": "Negative" if val > 0 else "Positive",
         "Details": news
     })
 
@@ -99,25 +116,26 @@ def build_data():
         "Details": get_related_news("Global Market Volatility VIX", days_lookback=2)
     })
 
-    # --- 7 DAY ITEMS (Weekly - 7d News) ---
+    # --- 7 DAY ITEMS ---
     today = datetime.now()
     days_ahead = 3 - today.weekday()
     if days_ahead <= 0: days_ahead += 7
     next_expiry = today + timedelta(days=days_ahead)
     expiry_date = next_expiry.strftime('%b %d')
     
-    # For weekly view, we allow 7 days lookback
     events.append({
         "Timeframe": "7-Day", "Event": "📅 Weekly Expiry", 
         "Value": expiry_date, "Impact": "Volatile",
         "Details": get_related_news("Nifty 50 Option Chain Analysis", days_lookback=7)
     })
 
-    # --- 30 DAY ITEMS (Macro - 30d News) ---
+    # --- 30 DAY ITEMS (RESTORED LOGIC) ---
     month_name = datetime.now().strftime('%B')
+    seas_val, seas_impact = get_seasonality_impact()
+    
     events.append({
         "Timeframe": "30-Day", "Event": f"📊 {month_name} Seasonality", 
-        "Value": "Check History", "Impact": "Info",
+        "Value": seas_val, "Impact": seas_impact,
         "Details": get_related_news(f"Stock Market Outlook {month_name} 2024 India", days_lookback=30)
     })
 
@@ -131,4 +149,4 @@ def build_data():
 # EXECUTE
 df = build_data()
 df.to_csv("dashboard_data.csv", index=False)
-print("✅ Dashboard updated with FRESH sources")
+print("✅ Dashboard updated with Seasonality & News")
