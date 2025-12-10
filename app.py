@@ -83,18 +83,27 @@ def get_nifty_chart_data():
         if df.empty:
             df = ticker.history(period="1mo", interval="1d")
 
-        # Clean Data
-        df = df[['Close']].reset_index()
-        
-        # Standardize Date Column Name
+        # --- CRITICAL FIX FOR YFINANCE MULTI-INDEX ---
+        # yfinance now returns columns like ('Close', '^NSEI'). We must flatten them.
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.droplevel(1)  # Drop the ticker name level
+            
+        # Standardize Date Column
+        df.reset_index(inplace=True)
         cols = [c.lower() for c in df.columns]
+        
+        # Rename date column safely
         if 'datetime' in cols:
             df.rename(columns={'Datetime': 'Date'}, inplace=True)
         elif 'date' in cols:
             df.rename(columns={'Date': 'Date'}, inplace=True)
             
-        return df
-    except Exception:
+        # Return only what we need, strictly typed
+        final_df = df[['Date', 'Close']].copy()
+        final_df['Close'] = final_df['Close'].astype(float)
+        return final_df
+        
+    except Exception as e:
         return pd.DataFrame()
 
 @st.cache_data(ttl=1800)
@@ -138,7 +147,7 @@ with tab1:
         chart_df = get_nifty_chart_data()
         
         if not chart_df.empty and 'Close' in chart_df.columns:
-            # Live Change Calculation
+            # Calculation
             current_price = chart_df['Close'].iloc[-1]
             prev_price = chart_df['Close'].iloc[0]
             change_pct = ((current_price - prev_price) / prev_price) * 100
@@ -146,13 +155,10 @@ with tab1:
             color = "green" if change_pct >= 0 else "red"
             st.markdown(f"<h2 style='color: {color}'>{current_price:,.2f} ({change_pct:+.2f}%)</h2>", unsafe_allow_html=True)
             
-            # --- CRITICAL FIX IS HERE ---
-            # 1. Set Date as Index
-            # 2. Select 'Close' column with DOUBLE BRACKETS [['Close']]
-            #    This forces pandas to keep it as a DataFrame, not a Series.
-            plot_data = chart_df.set_index('Date')[['Close']]
-            
-            st.line_chart(plot_data, use_container_width=True, height=400)
+            # --- FINAL PLOTTING FIX ---
+            # Using explicit x and y with a clean DataFrame. 
+            # This bypasses the Series logic entirely.
+            st.line_chart(chart_df, x='Date', y='Close', use_container_width=True, height=400)
         else:
             st.warning("Chart data currently unavailable.")
 
@@ -176,9 +182,9 @@ with tab2:
             impact = row['Impact']
             news_raw = row['Details']
             
-            text_color = "#ffa726" # Orange
-            if any(x in impact for x in ['Positive', 'Bullish', 'Low']): text_color = "#66bb6a" # Green
-            if any(x in impact for x in ['Negative', 'Bearish', 'High', 'Volatile']): text_color = "#ef5350" # Red
+            text_color = "#ffa726" 
+            if any(x in impact for x in ['Positive', 'Bullish', 'Low']): text_color = "#66bb6a"
+            if any(x in impact for x in ['Negative', 'Bearish', 'High', 'Volatile']): text_color = "#ef5350"
             
             col.markdown(f"""
             <div class="card">
