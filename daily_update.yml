@@ -1,0 +1,35 @@
+name: Daily Market Update
+
+on:
+  schedule:
+    # Runs at 02:30 UTC = 08:00 AM IST (Monday to Friday)
+    - cron: '30 2 * * 1-5'
+  workflow_dispatch: # Allows you to run this manually button click
+
+permissions:
+  contents: write # IMPORTANT: Allows the script to save the CSV back to the repo
+
+jobs:
+  update-csv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install pandas yfinance pytz
+
+      - name: Run Update Script
+        run: python update_data.py
+
+      - name: Commit and Push CSV
+        run: |
+          git config --global user.name 'GitHub Action'
+          git config --global user.email 'action@github.com'
+          git add dashboard_data.csv
+          # Only commit if there are changes
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update market data [skip ci]" && git push)
