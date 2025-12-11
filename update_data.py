@@ -5,189 +5,236 @@ import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 import pytz
 import warnings
-warnings.filterwarnings("ignore")  # Optional: suppress yfinance warnings
+import os
+from pathlib import Path
 
-# --- 1. NEWS ENGINE (More Reliable) ---
-def get_related_news(topic, days_lookback=2):
-    """Fetches top 3 recent news articles with strict date filtering."""
+warnings.filterwarnings("ignore")
+IST")
+
+# -----------------------------
+# CONFIG
+# -----------------------------
+IST = pytz.timezone('Asia/Kolkata')
+DATA_FILE = Path("dashboard_data.csv")
+CACHE_DIR = Path("cache")
+CACHE_DIR.mkdir(exist_ok=True)
+
+# -----------------------------
+# 1. ROBUST NEWS FETCHER (with caching)
+# -----------------------------
+def get_related_news(topic: str, days_lookback: int = 3) -> str:
+    """Fetch top 3 recent news with caching and better reliability."""
+    cache_file = CACHE_DIR / f"news_{topic.replace(' ', '_')}_{days_lookback}d.cache"
+    
+    # Serve from cache if < 30 mins old
+    if cache_file.exists():
+        age = datetime.now(IST) - datetime.fromtimestamp(cache_file.stat().st_mtime)
+        if age.total_seconds() < 1800:  # 30 mins
+            try:
+                return cache_file.read_text(encoding='utf-8')
+            except:
+                pass
+
     formatted_topic = topic.replace(" ", "+")
     url = f"https://news.google.com/rss/search?q={formatted_topic}+when:{days_lookback}d&hl=en-IN&gl=IN&ceid=IN:en"
-    
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                      '(KHTML, like Gecko) Chrome/130.0 Safari/537.36'
+    }
+
     try:
-        response = requests.get(url, headers=headers, timeout=8)
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         root = ET.fromstring(response.content)
-        
-        links = []
-        count = 0
-        for item in root.findall('./channel/item'):
-            if count >= 3:
-                break
-            title_elem = item.find('title')
-            link_elem = item.find('link')
-            pubDate_elem = item.find('pubDate')
 
-            if None in (title_elem, link_elem, pubDate_elem):
+        articles = []
+        for item in root.findall('./channel/item')[:5]:  # Get top 5, pick best 3
+            title = item.find('title').text if item.find('title') is not None else ""
+            link = item.find('link').text if item.find('link') is not None else ""
+            pub_date = item.find('pubDate').text if item.find('pubDate') is not None else ""
+
+            if not title or not link:
                 continue
-                
-            title = title_elem.text
-            link = link_elem.text
-            pubDate = pubDate_elem.text
 
+            # Clean date
             try:
-                # Handle GMT/UTC in pubDate
-                dt = datetime.strptime(pubDate.replace("GMT", "+0000"), "%a, %d %b %Y %H:%M:%S %z")
-                clean_date = dt.strftime("%b %d")
+                pub_dt = datetime.strptime(pub_date[:25], "%a, %d %b %Y %H:%M:%S")
+                date_str = pub_dt.strftime("%b %d")
             except:
-                clean_date = "Recent"
+                date_str = "Recent"
 
-            links.append(f"{title}|{link}|{clean_date}")
-            count += 1
+            articles.append(f"{title}|{link}|{date_str}")
 
-        return "|||".join(links) if links else "No recent news"
+            if len(articles) >= 3:
+                break
+
+        result = "|||".join(articles) if articles else "No recent news"
+        
+        # Cache result
+        cache_file.write_text(result, encoding='utf-8')
+        return result
+
     except Exception as e:
-        print(f"News fetch failed for '{topic}': {e}")
-        return "News unavailable"
+        print(f"News fetch failed ({topic}): {e}")
+        return "News temporarily unavailable"
 
 
-# --- 2. DATA CALCULATIONS ---
-def get_change_and_news(ticker, query_term):
-    """Calculates 1-day % change with fallback and better error handling."""
-    for t in [ticker, ticker.replace("^", "")]:  # Try both ^GSPC and GSPC if needed
+# -----------------------------
+# 2. SAFE YFINANCE WRAPPER
+# -----------------------------
+def safe_yf_change(tickers, period="5d", fallback_to_etf=True):
+    """Try multiple ticker variants, return % change and raw data."""
+    for t in tickers:
         try:
             tick = yf.Ticker(t)
-            hist = tick.history(period="5d", interval="1d")
+            hist = tick.history(period=period, interval="1d", auto_adjust=True)
             if len(hist) < 2:
                 continue
-
             latest = hist['Close'].iloc[-1]
             prev = hist['Close'].iloc[-2]
-            change = ((latest - prev) / prev) * 100
-
-            news_block = get_related_news(query_term, days_lookback=2)
-            return round(float(change), 2), news_block
+            change_pct = (latest - prev) / prev * 100
+            return round(change_pct, 2), latest
         except Exception as e:
             continue
-    return 0.0, "Data unavailable"
+    return 0.0, None
 
 
+# -----------------------------
+# 3. SEASONALITY (Improved Logic)
+# -----------------------------
 def get_seasonality_impact():
-    """Historical average return for current month (excluding current incomplete month)"""
     try:
-        current_month = datetime.now(pytz.timezone('Asia/Kolkata')).month
-        current_year = datetime.now(pytz.timezone('Asia/Kolkata')).year
+        now = datetime.now(IST)
+        current_month = now.month
 
-        nifty = yf.Ticker("^NSEI")
-        hist = nifty.history(period="12y", interval="1mo")  # More data = better avg
-        
-        if hist.empty or len(hist) < 12:
-            return "N/A", "Info"
+        nifty = yf.download("^NSEI", period="15y", interval="1mo", progress=False)
+        if nifty.empty or len(nifty) < 24:
+            return "N/A", "Neutral"
 
-        hist['Return'] = hist['Close'].pct_change() * 100
-        seasonal_data = hist[hist.index.month == current_month].copy()
+        nifty['Return'] = nifty['Close'].pct_change() * 100
+        monthly = nifty[nifty.index.month == current_month]
 
-        # Remove current incomplete month
-        if not seasonal_data.empty:
-            last_idx = seasonal_data.index[-1]
-            if last_idx.year == current_year and last_idx.month == current_month:
-                seasonal_data = seasonal_data.iloc[:-1]
+        # Exclude current incomplete month
+        if not monthly.empty and monthly.index[-1].date() >= now.date().replace(day=1):
+            monthly = monthly.iloc[:-1]
 
-        if len(seasonal_data) == 0:
-            return "No Data", "Info"
+        if len(monthly) < 3:
+            return "Limited Data", "Neutral"
 
-        avg_return = seasonal_data['Return'].mean()
+        avg_return = monthly['Return'].mean()
+        std_dev = monthly['Return'].std()
 
-        if avg_return > 1.5:
-            impact = "Bullish"
+        if avg_return > 1.2:
+            impact = "Strongly Bullish"
         elif avg_return > 0.5:
-            impact = "Positive"
-        elif avg_return < -1.5:
-            impact = "Bearish"
+            impact = "Bullish"
+        elif avg_return < -1.2:
+            impact = "Strongly Bearish"
         elif avg_return < -0.5:
-            impact = "Negative"
+            impact = "Bearish"
         else:
             impact = "Neutral"
 
         return f"{avg_return:+.2f}%", impact
 
     except Exception as e:
-        print(f"Seasonality Error: {e}")
-        return "Error", "Info"
+        print(f"Seasonality error: {e}")
+        return "Error", "Neutral"
 
 
-# --- 3. BUILD DASHBOARD ---
+# -----------------------------
+# 4. BUILD DASHBOARD DATA
+# -----------------------------
 def build_data():
     events = []
+    now_ist = datetime.now(IST)
 
-    # === 1-Day Items ===
-    val, news = get_change_and_news("^GSPC", "S&P 500 today market analysis")
-    if abs(val) < 0.01:  # fallback to SPY
-        val, news = get_change_and_news("SPY", "SPY ETF performance")
+    # 1. US Market (S&P 500)
+    sp_change, _ = safe_yf_change(["^GSPC", "SPY"])
     events.append({
-        "Timeframe": "1-Day", "Event": "US Market Trend",
-        "Value": f"{val:+.2f}%", "Impact": "Positive" if val > 0 else "Negative",
-        "Details": news
+        "Timeframe": "1-Day",
+        "Event": "US Market (S&P 500)",
+        "Value": f"{sp_change:+.2f}%",
+        "Impact": "Bullish" if sp_change > 0 else "Bearish",
+        "Details": get_related_news("S&P 500 today", days_lookback=2)
     })
 
-    val, news = get_change_and_news("CL=F", "Crude Oil price impact India")
+    # 2. Crude Oil
+    oil_change, _ = safe_yf_change(["CL=F", "CRUDEOIL.NS"])
+    impact_oil = "Bearish" if oil_change > 2 else "Bullish" if oil_change < -1 else "Neutral"
     events.append({
-        "Timeframe": "1-Day", "Event": "Crude Oil Impact",
-        "Value": f"{val:+.2f}%", "Impact": "Negative" if val > 0 else "Positive",
-        "Details": news
+        "Timeframe": "1-Day",
+        "Event": "Crude Oil Price",
+        "Value": f"{oil_change:+.2f}%",
+        "Impact": impact_oil,
+        "Details": get_related_news("Crude oil price India impact", days_lookback=2)
     })
 
+    # 3. India VIX
     try:
-        vix = yf.Ticker("^VIX").history(period="2d")['Close'].iloc[-1]
-        vix_val = round(vix, 2)
-        vix_impact = "High Fear" if vix_val > 30 else "Elevated" if vix_val > 20 else "Low Fear"
+        india_vix = yf.Ticker("^INDIAVIX").history(period="2d")['Close'].iloc[-1]
+        vix_val = round(india_vix, 2)
+        vix_impact = "Extreme Fear" if vix_val > 25 else "High Fear" if vix_val > 18 else "Calm"
     except:
-        vix_val, vix_impact = 0.0, "Unavailable"
+        vix_val, vix_impact = "N/A", "Unknown"
 
     events.append({
-        "Timeframe": "1-Day", "Event": "Market Fear (VIX)",
-        "Value": str(vix_val), "Impact": vix_impact,
-        "Details": get_related_news("VIX volatility fear gauge", days_lookback=2)
+        "Timeframe": "1-Day",
+        "Event": "India VIX (Fear Gauge)",
+        "Value": str(vix_val),
+        "Impact": vix_impact,
+        "Details": get_related_news("India VIX today", days_lookback=2)
     })
 
-    # === 7-Day: Weekly Expiry (India) ===
-    ist = pytz.timezone('Asia/Kolkata')
-    today = datetime.now(ist)
-    # Thursday expiry for NIFTY/BANKNIFTY
-    days_to_thursday = (3 - today.weekday() + 7) % 7
-    if days_to_thursday == 0:
-        days_to_thursday = 7  # Next week if today is Thursday
-    next_expiry = today + timedelta(days=days_to_thursday)
-    expiry_str = next_expiry.strftime('%b %d')
-
+    # 4. Weekly Expiry
+    days_to_thursday = (3 - now_ist.weekday() + 7) % 7 or 7
+    next_expiry = now_ist + timedelta(days=days_to_thursday)
     events.append({
-        "Timeframe": "7-Day", "Event": "Weekly Expiry (Thu)",
-        "Value": expiry_str, "Impact": "High Volatility",
-        "Details": get_related_news("Nifty BankNifty weekly expiry option chain", days_lookback=7)
+        "Timeframe": "7-Day",
+        "Event": "Next Weekly Expiry",
+        "Value": next_expiry.strftime('%b %d (%A)'),
+        "Impact": "High Volatility Expected",
+        "Details": get_related_news("Nifty weekly expiry strategy", days_lookback=5)
     })
 
-    # === 30-Day: Monthly Seasonality ===
-    month_name = today.strftime('%B')
+    # 5. Monthly Seasonality
+    month_name = now_ist.strftime('%B')
     seas_val, seas_impact = get_seasonality_impact()
     events.append({
-        "Timeframe": "30-Day", "Event": f"{month_name} Seasonality",
-        "Value": seas_val, "Impact": seas_impact,
-        "Details": get_related_news(f"India stock market outlook {month_name} seasonality", days_lookback=30)
+        "Timeframe": "30-Day",
+        "Event": f"{month_name} Seasonality",
+        "Value": seas_val,
+        "Impact": seas_impact,
+        "Details": get_related_news(f"Nifty {month_name} historical performance", days_lookback=30)
     })
 
-    # === Meta ===
+    # 6. Next Major Events (RBI, CPI, FOMC, etc.) - Bonus!
     events.append({
-        "Timeframe": "Meta", "Event": "Last Updated (IST)",
-        "Value": today.strftime('%Y-%m-%d %H:%M:%S'), "Impact": "Info", "Details": ""
+        "Timeframe": "Upcoming",
+        "Event": "Major Economic Events",
+        "Value": "RBI Policy, CPI, FOMC",
+        "Impact": "Watch Calendar",
+        "Details": get_related_news("India economic calendar RBI FOMC CPI GDP this month", days_lookback=15)
     })
 
-    return pd.DataFrame(events)
+    # Meta
+    events.append({
+        "Timeframe": "Meta",
+        "Event": "Last Updated (IST)",
+        "Value": now_ist.strftime('%b %d, %H:%M'),
+        "Impact": "Live",
+        "Details": ""
+    })
+
+    df = pd.DataFrame(events)
+    df.to_csv(DATA_FILE, index=False)
+    print(f"Dashboard updated at {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}")
+    return df
 
 
-# === EXECUTE ===
+# -----------------------------
+# RUN
+# -----------------------------
 if __name__ == "__main__":
     df = build_data()
-    df.to_csv("dashboard_data.csv", index=False)
-    print("Dashboard updated successfully!")
-    print(df.head(10))
+    print(df[['Timeframe', 'Event', 'Value', 'Impact']])
