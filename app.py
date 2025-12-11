@@ -4,6 +4,7 @@ import requests
 from datetime import datetime
 import pytz
 import os
+from nselib import capital_market
 
 # --- IMPORT YOUR DATA GENERATOR ---
 # UPDATED: Now importing from 'update_data.py'
@@ -97,55 +98,32 @@ df = load_data()
 st.title("NIFTY 50 Pro Dashboard")
 st.markdown(f"**Live Chart • FII/DII • Key Drivers • News**")
 
-# --- FII / DII Section (NSE Live JSON API) ---
+# --- FII / DII Section (Using nselib) ---
 st.subheader("Latest FII / DII Net Flow (₹ Cr)")
 
 @st.cache_data(ttl=3600)
 def get_fii_dii():
     try:
-        # 1. Setup a Session (Stores cookies like a real browser)
-        session = requests.Session()
+        # nselib handles all the cookies/session logic for you
+        data = capital_market.fii_dii_trading_activity()
         
-        # 2. Mimic a real Chrome browser completely
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.nseindia.com/"
-        }
-        session.headers.update(headers)
-
-        # 3. CRITICAL: Visit Homepage first to get valid Cookies
-        # Without this, the API returns 401 Unauthorized
-        session.get("https://www.nseindia.com", timeout=10)
-
-        # 4. Now hit the internal API endpoint for FII/DII
-        url = "https://www.nseindia.com/api/fiidii"
-        response = session.get(url, timeout=10)
-        response.raise_for_status()
+        # The library returns a DataFrame. We want the top row (Latest Date).
+        # Note: We sort by Date just in case, though usually top row is latest.
+        # But nselib format is dd-mm-yyyy, so standard sort might be tricky. 
+        # Safest is usually the first row [0].
+        latest = data.iloc[0]
         
-        # 5. Parse the JSON Data
-        data = response.json()
+        date_str = latest['Date']
         
-        # NSE returns a list. We need to find the specific dictionaries for FII and DII.
-        fii_net = 0.0
-        dii_net = 0.0
-        date_str = "Latest"
-        
-        for item in data:
-            if item['category'] == "FII/FPI":
-                fii_net = float(item['netValue'])
-                date_str = item['date']
-            elif item['category'] == "DII":
-                dii_net = float(item['netValue'])
-                date_str = item['date']
+        # Clean the strings (remove commas) and convert to float
+        fii_net = float(str(latest['Net Purchase / Sales(FII)']).replace(',', ''))
+        dii_net = float(str(latest['Net Purchase / Sales(DII)']).replace(',', ''))
         
         return date_str, fii_net, dii_net
-
+        
     except Exception as e:
-        print(f"NSE API Failed: {e}")
-        # Return Error state so you know it failed
-        return "API Blocked", 0.0, 0.0
+        print(f"nselib Error: {e}")
+        return "Error", 0.0, 0.0
 
 # Call the function
 date_fii, fii_net, dii_net = get_fii_dii()
@@ -154,7 +132,7 @@ date_fii, fii_net, dii_net = get_fii_dii()
 c1, c2 = st.columns(2)
 c1.metric("FII Net", f"₹{fii_net:,.2f} Cr", delta=fii_net)
 c2.metric("DII Net", f"₹{dii_net:,.2f} Cr", delta=dii_net)
-st.caption(f"Source: NSE India API • Date: {date_fii}")
+st.caption(f"Source: nselib • Date: {date_fii}")
 
 # --- Cards Section ---
 st.markdown("---")
