@@ -17,6 +17,7 @@ def load_data():
         df = build_data()
     else:
         df = pd.read_csv("dashboard_data.csv")
+        df['Details'] = df['Details'].fillna("")  # Fix NaN to empty string
     return df
 
 if st.sidebar.button("Force Refresh Now"):
@@ -27,27 +28,32 @@ if st.sidebar.button("Force Refresh Now"):
 
 df = load_data()
 
-# Display
+# Display in columns
 col1, col2, col3 = st.columns(3)
 
 for _, row in df.iterrows():
-    if row["Timeframe"] == "1-Day":
+    timeframe = row["Timeframe"]
+    if timeframe == "1-Day":
         col = col1
-    elif row["Timeframe"] in ["7-Day", "Upcoming", "Ongoing"]:
+    elif timeframe in ["7-Day", "Upcoming", "Ongoing"]:
         col = col2
     else:
         col = col3
 
     with col:
-        color = {"Bullish":"🟢","Bearish":"🔴","Neutral":"⚪","High Volatility":"🟠","Very High":"🔴","Calm":"🟢"}.get(row["Impact"], "⚪")
+        impact = row["Impact"]
+        color = {"Bullish":"🟢","Bearish":"🔴","Neutral":"⚪","High Volatility":"🟠","Very High":"🔴","Calm":"🟢"}.get(impact, "⚪")
         st.markdown(f"#### {color} {row['Event']}")
         st.markdown(f"**{row['Value']}**")
-        st.caption(f"Impact: {row['Impact']}")
-        if row["Details"] and "unavailable" not in row["Details"]:
+        st.caption(f"Impact: {impact}")
+        details = row["Details"]
+        if details and "unavailable" not in details:
             with st.expander("News"):
-                for art in row["Details"].split("|||")[:3]:
+                for art in details.split("|||")[:3]:
                     if "|" in art:
-                        title, link, _ = art.split("|", 2)
+                        parts = art.split("|")
+                        title = parts[0]
+                        link = parts[1] if len(parts) > 1 else ""
                         st.markdown(f"• [{title}]({link})")
 
 st.caption("Auto-refreshes every 8 min • Data: Yahoo Finance + Google News")
