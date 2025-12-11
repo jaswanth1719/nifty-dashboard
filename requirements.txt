@@ -6,3 +6,4 @@ pytz
 nselib
 lxml
 pandas_market_calendars
+beautifulsoup4
