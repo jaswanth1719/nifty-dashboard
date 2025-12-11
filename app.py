@@ -4,7 +4,7 @@ import requests
 from datetime import datetime
 import pytz
 import os
-from nselib import capital_market
+from bs4 import BeautifulSoup # NEW: For scraping Moneycontrol
 
 # --- IMPORT YOUR DATA GENERATOR ---
 # UPDATED: Now importing from 'update_data.py'
@@ -98,41 +98,84 @@ df = load_data()
 st.title("NIFTY 50 Pro Dashboard")
 st.markdown(f"**Live Chart • FII/DII • Key Drivers • News**")
 
-# --- FII / DII Section (Using nselib) ---
+# --- FII / DII Section (Moneycontrol Scraper) ---
 st.subheader("Latest FII / DII Net Flow (₹ Cr)")
 
 @st.cache_data(ttl=3600)
 def get_fii_dii():
     try:
-        # nselib handles all the cookies/session logic for you
-        data = capital_market.fii_dii_trading_activity()
+        # Source: Moneycontrol FII/DII Page
+        url = "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/index.php"
         
-        # The library returns a DataFrame. We want the top row (Latest Date).
-        # Note: We sort by Date just in case, though usually top row is latest.
-        # But nselib format is dd-mm-yyyy, so standard sort might be tricky. 
-        # Safest is usually the first row [0].
-        latest = data.iloc[0]
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
         
-        date_str = latest['Date']
+        # 1. Fetch the HTML
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
         
-        # Clean the strings (remove commas) and convert to float
-        fii_net = float(str(latest['Net Purchase / Sales(FII)']).replace(',', ''))
-        dii_net = float(str(latest['Net Purchase / Sales(DII)']).replace(',', ''))
+        # 2. Parse HTML with BeautifulSoup
+        soup = BeautifulSoup(response.text, "lxml")
         
-        return date_str, fii_net, dii_net
+        # 3. Find the specific value containers
+        # Moneycontrol puts these values in 'strong' tags inside the table
+        # We look for the text "FII" and "DII" to locate the right section
         
-    except Exception as e:
-        print(f"nselib Error: {e}")
-        return "Error", 0.0, 0.0
+        fii_net = 0.0
+        dii_net = 0.0
+        date_str = "Recent"
+        
+        # Find all tables
+        tables = soup.find_all('table')
+        
+        for table in tables:
+            text = table.get_text()
+            if "FII" in text and "DII" in text and "Net" in text:
+                # We found the data table. Now extract rows.
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    row_text = [ele.text.strip() for ele in cols]
+                    
+                    if not row_text:
+                        continue
+                        
+                    # Check for FII Row
+                    if "FII" in row_text[0]:
+                        # The Net Value is usually in the 3rd or 4th column
+                        # Format is often: [Institution, Gross Buy, Gross Sell, Net, Date]
+                        # We try to grab the last numeric column which is usually Net
+                        try:
+                            val = row_text[3].replace(",", "")
+                            fii_net = float(val)
+                        except:
+                            pass
+                            
+                    # Check for DII Row
+                    if "DII" in row_text[0]:
+                        try:
+                            val = row_text[3].replace(",", "")
+                            dii_net = float(val)
+                        except:
+                            pass
+                            
+                # If we found data, stop searching tables
+                if fii_net != 0 or dii_net != 0:
+                    break
 
-# Call the function
+        return "Latest", fii_net, dii_net
+
+    except Exception as e:
+        print(f"Scrape Error: {e}")
+        return "Data Unavailable", 0.0, 0.0
+
 date_fii, fii_net, dii_net = get_fii_dii()
 
-# Display Metrics
 c1, c2 = st.columns(2)
 c1.metric("FII Net", f"₹{fii_net:,.2f} Cr", delta=fii_net)
 c2.metric("DII Net", f"₹{dii_net:,.2f} Cr", delta=dii_net)
-st.caption(f"Source: nselib • Date: {date_fii}")
+st.caption(f"Source: Moneycontrol • Status: {date_fii}")
 
 # --- Cards Section ---
 st.markdown("---")
