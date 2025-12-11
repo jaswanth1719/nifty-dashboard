@@ -97,70 +97,64 @@ df = load_data()
 st.title("NIFTY 50 Pro Dashboard")
 st.markdown(f"**Live Chart • FII/DII • Key Drivers • News**")
 
-# --- FII / DII Section (Moneycontrol Source) ---
+# --- FII / DII Section (NSE Live JSON API) ---
 st.subheader("Latest FII / DII Net Flow (₹ Cr)")
 
 @st.cache_data(ttl=3600)
 def get_fii_dii():
     try:
-        # Source: Moneycontrol (More reliable for scraping than NSE)
-        url = "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/index.php"
+        # 1. Setup a Session (Stores cookies like a real browser)
+        session = requests.Session()
         
-        # Headers to look like a real browser
+        # 2. Mimic a real Chrome browser completely
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": "https://www.nseindia.com/"
         }
-        
-        response = requests.get(url, headers=headers, timeout=10)
+        session.headers.update(headers)
+
+        # 3. CRITICAL: Visit Homepage first to get valid Cookies
+        # Without this, the API returns 401 Unauthorized
+        session.get("https://www.nseindia.com", timeout=10)
+
+        # 4. Now hit the internal API endpoint for FII/DII
+        url = "https://www.nseindia.com/api/fiidii"
+        response = session.get(url, timeout=10)
         response.raise_for_status()
         
-        # Pandas can extract all tables from the HTML automatically
-        # We look for the table containing "FII" and "DII" text
-        dfs = pd.read_html(response.text)
+        # 5. Parse the JSON Data
+        data = response.json()
         
-        for df in dfs:
-            # Convert to string to safely check for keywords
-            if "FII" in df.to_string() and "DII" in df.to_string():
-                # Usually Moneycontrol's table has columns like:
-                # [Institution, Gross Purchase, Gross Sales, Net Purchase, Date]
-                # We need to clean column names to be sure
-                df.columns = [c.lower() for c in df.columns]
-                
-                # Filter rows
-                fii_row = df[df.iloc[:, 0].astype(str).str.contains("FII", case=False, na=False)]
-                dii_row = df[df.iloc[:, 0].astype(str).str.contains("DII", case=False, na=False)]
-                
-                if not fii_row.empty and not dii_row.empty:
-                    # Extract Net Value (usually the 4th column, index 3)
-                    # Values might be strings like "1,234.56" -> need cleanup
-                    fii_val = fii_row.iloc[0, 3]
-                    dii_val = dii_row.iloc[0, 3]
-                    
-                    # Helper to convert "1,234.50" string to float
-                    def clean_val(x):
-                        return float(str(x).replace(",", ""))
-
-                    fii_net = clean_val(fii_val)
-                    dii_net = clean_val(dii_val)
-                    
-                    # Moneycontrol doesn't always have the date in the row, 
-                    # but we can assume it's the latest available if we fetched it live.
-                    return "Latest", fii_net, dii_net
-
-        return "Data Not Found", 0.0, 0.0
+        # NSE returns a list. We need to find the specific dictionaries for FII and DII.
+        fii_net = 0.0
+        dii_net = 0.0
+        date_str = "Latest"
         
+        for item in data:
+            if item['category'] == "FII/FPI":
+                fii_net = float(item['netValue'])
+                date_str = item['date']
+            elif item['category'] == "DII":
+                dii_net = float(item['netValue'])
+                date_str = item['date']
+        
+        return date_str, fii_net, dii_net
+
     except Exception as e:
-        print(f"Error fetching FII/DII: {e}")
-        return "Error", 0.0, 0.0
+        print(f"NSE API Failed: {e}")
+        # Return Error state so you know it failed
+        return "API Blocked", 0.0, 0.0
 
 # Call the function
 date_fii, fii_net, dii_net = get_fii_dii()
 
 # Display Metrics
 c1, c2 = st.columns(2)
-c1.metric("FII Net", f"₹{fii_net:,.0f} Cr", delta=fii_net)
-c2.metric("DII Net", f"₹{dii_net:,.0f} Cr", delta=dii_net)
-st.caption(f"Source: Moneycontrol • Status: {date_fii}")
+c1.metric("FII Net", f"₹{fii_net:,.2f} Cr", delta=fii_net)
+c2.metric("DII Net", f"₹{dii_net:,.2f} Cr", delta=dii_net)
+st.caption(f"Source: NSE India API • Date: {date_fii}")
 
 # --- Cards Section ---
 st.markdown("---")
