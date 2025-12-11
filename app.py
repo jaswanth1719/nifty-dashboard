@@ -97,38 +97,70 @@ df = load_data()
 st.title("NIFTY 50 Pro Dashboard")
 st.markdown(f"**Live Chart • FII/DII • Key Drivers • News**")
 
-# --- FII / DII Section (Live Fetch) ---
+# --- FII / DII Section (Moneycontrol Source) ---
 st.subheader("Latest FII / DII Net Flow (₹ Cr)")
 
 @st.cache_data(ttl=3600)
 def get_fii_dii():
     try:
-        url = "https://archives.nseindia.com/content/equities/FIIDII.csv"
-        # Anti-blocking headers
+        # Source: Moneycontrol (More reliable for scraping than NSE)
+        url = "https://www.moneycontrol.com/stocks/marketstats/fii_dii_activity/index.php"
+        
+        # Headers to look like a real browser
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
         }
-        response = requests.get(url, headers=headers, timeout=5)
+        
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        from io import StringIO
-        data = StringIO(response.text)
-        df_fii = pd.read_csv(data, skiprows=1)
-        row = df_fii.iloc[0]
+        # Pandas can extract all tables from the HTML automatically
+        # We look for the table containing "FII" and "DII" text
+        dfs = pd.read_html(response.text)
         
-        return (
-            row['Date'], 
-            float(str(row['FII Net (Cr.)']).replace(',', '')), 
-            float(str(row['DII Net (Cr.)']).replace(',', ''))
-        )
-    except Exception:
-        return "Offline", 0.0, 0.0
+        for df in dfs:
+            # Convert to string to safely check for keywords
+            if "FII" in df.to_string() and "DII" in df.to_string():
+                # Usually Moneycontrol's table has columns like:
+                # [Institution, Gross Purchase, Gross Sales, Net Purchase, Date]
+                # We need to clean column names to be sure
+                df.columns = [c.lower() for c in df.columns]
+                
+                # Filter rows
+                fii_row = df[df.iloc[:, 0].astype(str).str.contains("FII", case=False, na=False)]
+                dii_row = df[df.iloc[:, 0].astype(str).str.contains("DII", case=False, na=False)]
+                
+                if not fii_row.empty and not dii_row.empty:
+                    # Extract Net Value (usually the 4th column, index 3)
+                    # Values might be strings like "1,234.56" -> need cleanup
+                    fii_val = fii_row.iloc[0, 3]
+                    dii_val = dii_row.iloc[0, 3]
+                    
+                    # Helper to convert "1,234.50" string to float
+                    def clean_val(x):
+                        return float(str(x).replace(",", ""))
 
+                    fii_net = clean_val(fii_val)
+                    dii_net = clean_val(dii_val)
+                    
+                    # Moneycontrol doesn't always have the date in the row, 
+                    # but we can assume it's the latest available if we fetched it live.
+                    return "Latest", fii_net, dii_net
+
+        return "Data Not Found", 0.0, 0.0
+        
+    except Exception as e:
+        print(f"Error fetching FII/DII: {e}")
+        return "Error", 0.0, 0.0
+
+# Call the function
 date_fii, fii_net, dii_net = get_fii_dii()
 
+# Display Metrics
 c1, c2 = st.columns(2)
 c1.metric("FII Net", f"₹{fii_net:,.0f} Cr", delta=fii_net)
 c2.metric("DII Net", f"₹{dii_net:,.0f} Cr", delta=dii_net)
+st.caption(f"Source: Moneycontrol • Status: {date_fii}")
 
 # --- Cards Section ---
 st.markdown("---")
