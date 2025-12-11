@@ -77,7 +77,7 @@ def load_data():
 
 # ==================== Sidebar: Force Refresh ====================
 # This button triggers the script to run and fetch new data
-if st.sidebar.button("Force Refresh Data (Slow)", type="primary"):
+if st.sidebar.button("Force Refresh Data"):
     with st.spinner("Fetching fresh market data from Yahoo & Google News..."):
         try:
             # 1. Run the generator function from update_data.py
